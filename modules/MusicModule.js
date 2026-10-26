@@ -1,10 +1,15 @@
-const BaseModule = require('./BaseModule');
-const { Markup } = require('telegraf');
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegStatic = require('ffmpeg-static');
+import BaseModule from './BaseModule.js';
+import { Markup } from 'telegraf';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import axios from 'axios';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegStatic from 'ffmpeg-static';
+import { spawn } from 'child_process';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 class MusicModule extends BaseModule {
   constructor() {
@@ -14,21 +19,26 @@ class MusicModule extends BaseModule {
     this.version = '1.0.0';
     this.author = 'Bot Developer';
     this.commands = [
-      { command: 'music', description: '🎵 Search & download music', adminOnly: false },
-      { command: 'search', description: '🔍 Search music', adminOnly: false },
-      { command: 'download', description: '⬇️ Download music by ID', adminOnly: false }
+      { command: 'music', description: '🎵 Search & download music', adminOnly: false, rateLimit: true },
+      { command: 'search', description: '🔍 Search music', adminOnly: false, rateLimit: true },
+      { command: 'download', description: '⬇️ Download music by ID', adminOnly: false, rateLimit: true }
     ];
     
-    // Cache untuk menyimpan hasil search per user
     this.searchCache = new Map();
-    // Cache untuk menyimpan download progress
     this.downloadCache = new Map();
     
-    // Konfigurasi - akan di-merge dengan global config di init()
+    this.downloadSemaphore = 0;
+    this.maxConcurrentDownloads = 2;
+    this.uploadSemaphore = 0;
+    this.maxConcurrentUploads = 1;
+    
+    this.downloadQueue = [];
+    this.uploadQueue = [];
+    
     this.config = {
       maxResults: 10,
-      downloadTimeout: 300000, // 5 menit
-      maxFileSize: 50 * 1024 * 1024, // 50MB
+      downloadTimeout: 300000,
+      maxFileSize: 50 * 1024 * 1024,
       tempDir: null,
       apiBaseUrl: 'https://tracks.monochrome.st',
       searchEndpoint: '/api/v1/search',
@@ -38,37 +48,100 @@ class MusicModule extends BaseModule {
   }
 
   async init(bot, config) {
-    // Simpan module DEFAULT config SEBELUM super.init() overwrite
     const moduleDefaultConfig = { ...this.config };
     
     await super.init(bot, config);
     
-    // Merge: global config + module defaults (module defaults take precedence for module-specific keys)
     this.config = { ...config, ...moduleDefaultConfig };
     
-    // Setup temp directory
     this.config.tempDir = path.join(__dirname, '..', 'temp');
     
-    // Setup ffmpeg path
     if (ffmpegStatic) {
       ffmpeg.setFfmpegPath(ffmpegStatic);
     }
     
-    // Buat temp directory
     if (!fs.existsSync(this.config.tempDir)) {
       fs.mkdirSync(this.config.tempDir, { recursive: true });
     }
     
-    // Cleanup temp files lama (> 1 jam) setiap 10 menit
     setInterval(() => this.cleanupTempFiles(), 10 * 60 * 1000);
     
-    console.log(`[${this.name}] Music module initialized with temp dir: ${this.config.tempDir}`);
-    console.log(`[${this.name}] API Base URL: ${this.config.apiBaseUrl}`);
+    this.logger.info({ tempDir: this.config.tempDir }, 'Music module initialized');
+    this.logger.info({ apiBaseUrl: this.config.apiBaseUrl }, 'API config');
+    this.logger.info({ 
+      maxConcurrentDownloads: this.maxConcurrentDownloads, 
+      maxConcurrentUploads: this.maxConcurrentUploads 
+    }, 'Concurrency limits');
+  }
+
+  async acquireDownloadSemaphore(ctx) {
+    return new Promise((resolve) => {
+      const tryAcquire = () => {
+        if (this.downloadSemaphore < this.maxConcurrentDownloads) {
+          this.downloadSemaphore++;
+          this.logger.debug({ active: this.downloadSemaphore, max: this.maxConcurrentDownloads }, 'Download semaphore acquired');
+          resolve();
+        } else {
+          this.downloadQueue.push({ ctx, resolve });
+          this.logger.debug({ queueLength: this.downloadQueue.length }, 'Download queued');
+          
+          if (ctx) {
+            ctx.reply(`⏳ Server sibuk, Anda dalam antrian posisi ${this.downloadQueue.length}. Silakan tunggu...`)
+              .catch(() => {});
+          }
+        }
+      };
+      tryAcquire();
+    });
+  }
+
+  releaseDownloadSemaphore() {
+    this.downloadSemaphore--;
+    this.logger.debug({ active: this.downloadSemaphore, max: this.maxConcurrentDownloads }, 'Download semaphore released');
+    
+    if (this.downloadQueue.length > 0) {
+      const next = this.downloadQueue.shift();
+      this.downloadSemaphore++;
+      this.logger.debug({ active: this.downloadSemaphore, max: this.maxConcurrentDownloads }, 'Processing queued download');
+      next.resolve();
+    }
+  }
+
+  async acquireUploadSemaphore(ctx) {
+    return new Promise((resolve) => {
+      const tryAcquire = () => {
+        if (this.uploadSemaphore < this.maxConcurrentUploads) {
+          this.uploadSemaphore++;
+          this.logger.debug({ active: this.uploadSemaphore, max: this.maxConcurrentUploads }, 'Upload semaphore acquired');
+          resolve();
+        } else {
+          this.uploadQueue.push({ ctx, resolve });
+          this.logger.debug({ queueLength: this.uploadQueue.length }, 'Upload queued');
+          
+          if (ctx) {
+            ctx.reply(`⏳ Upload antrian posisi ${this.uploadQueue.length}. Silakan tunggu...`)
+              .catch(() => {});
+          }
+        }
+      };
+      tryAcquire();
+    });
+  }
+
+  releaseUploadSemaphore() {
+    this.uploadSemaphore--;
+    this.logger.debug({ active: this.uploadSemaphore, max: this.maxConcurrentUploads }, 'Upload semaphore released');
+    
+    if (this.uploadQueue.length > 0) {
+      const next = this.uploadQueue.shift();
+      this.uploadSemaphore++;
+      this.logger.debug({ active: this.uploadSemaphore, max: this.maxConcurrentUploads }, 'Processing queued upload');
+      next.resolve();
+    }
   }
 
   registerHandlers() {
-    // Command /music - utama
-    this.bot.command('music', async (ctx) => {
+    this.rateLimitedCommand('music', '🎵 Search & download music', async (ctx) => {
       const args = ctx.message.text.split(' ').slice(1).join(' ');
       if (!args) {
         return ctx.reply(
@@ -84,8 +157,7 @@ class MusicModule extends BaseModule {
       await this.handleSearch(ctx, args);
     });
 
-    // Command /search
-    this.bot.command('search', async (ctx) => {
+    this.rateLimitedCommand('search', '🔍 Search music', async (ctx) => {
       const query = ctx.message.text.split(' ').slice(1).join(' ');
       if (!query) {
         return ctx.reply('Gunakan: `/search <judul lagu/artis>`', { parse_mode: 'Markdown' });
@@ -93,8 +165,7 @@ class MusicModule extends BaseModule {
       await this.handleSearch(ctx, query);
     });
 
-    // Command /download
-    this.bot.command('download', async (ctx) => {
+    this.rateLimitedCommand('download', '⬇️ Download music by ID', async (ctx) => {
       const trackId = ctx.message.text.split(' ')[1];
       if (!trackId) {
         return ctx.reply('Gunakan: `/download <track_id>`', { parse_mode: 'Markdown' });
@@ -102,7 +173,6 @@ class MusicModule extends BaseModule {
       await this.handleDownload(ctx, trackId);
     });
 
-    // Callback query untuk inline keyboard
     this.bot.action(/^music_select_(.+)$/, async (ctx) => {
       const trackId = ctx.match[1];
       await ctx.answerCbQuery('⬇️ Memulai download...');
@@ -120,7 +190,6 @@ class MusicModule extends BaseModule {
       await ctx.editMessageText('❌ Pencarian dibatalkan.');
     });
 
-    // Handle text "music" atau "lagu" untuk quick access
     this.bot.hears(/^(music|lagu|download musik)$/i, async (ctx) => {
       await ctx.reply(
         '🎵 *Music Downloader*\n\n' +
@@ -133,11 +202,21 @@ class MusicModule extends BaseModule {
     });
   }
 
-  /**
-   * Handle search command
-   */
   async handleSearch(ctx, query) {
     const userId = ctx.from.id;
+    
+    if (!query || query.trim() === '') {
+      return ctx.reply(
+        '🎵 *Music Downloader*\n\n' +
+        'Gunakan: `/music <judul lagu/artis>`\n' +
+        'Contoh: `/music The Weeknd Blinding Lights`\n\n' +
+        'Atau gunakan command terpisah:\n' +
+        '• `/search <query>` - Cari musik\n' +
+        '• `/download <track_id>` - Download by ID',
+        { parse_mode: 'Markdown' }
+      );
+    }
+    
     const message = await ctx.reply('🔍 Mencari musik...', { parse_mode: 'Markdown' });
     
     try {
@@ -151,14 +230,12 @@ class MusicModule extends BaseModule {
         return;
       }
       
-      // Simpan ke cache
       this.searchCache.set(userId, { query, results, page: 0, timestamp: Date.now() });
       
-      // Tampilkan hasil pertama
       await this.showSearchResults(ctx, query, 0, false, message.message_id);
       
     } catch (error) {
-      console.error('[MusicModule] Search error:', error);
+      this.logger.error({ err: error, query }, 'Search error');
       await ctx.telegram.editMessageText(
         ctx.chat.id, message.message_id, null,
         `❌ Error saat mencari: ${error.message}`
@@ -166,19 +243,14 @@ class MusicModule extends BaseModule {
     }
   }
 
-  /**
-   * Search tracks dari Monochrome API
-   * Endpoint: GET https://tracks.monochrome.st/search?q={query}
-   * Returns: { tracks, releases, artists, users, playlists }
-   */
   async searchTracks(query) {
-    console.log(`[MusicModule] Searching for: "${query}"`);
+    this.logger.info({ query }, 'Searching for tracks');
     
     try {
       const baseUrl = this.config.monochromeApiBaseUrl || this.config.apiBaseUrl;
       const url = `${baseUrl}/search?q=${encodeURIComponent(query)}`;
       
-      console.log(`[MusicModule] Trying search: ${url}`);
+      this.logger.debug({ url }, 'Trying search');
       const response = await axios.get(url, {
         headers: {
           'Accept': 'application/json',
@@ -187,12 +259,11 @@ class MusicModule extends BaseModule {
         timeout: 15000
       });
       
-      console.log(`[MusicModule] Response status: ${response.status}`);
+      this.logger.debug({ status: response.status }, 'Search response');
       
       const data = response.data;
       const results = [];
       
-      // Build release lookup map (both releaseId and id)
       const releaseMap = new Map();
       if (data.releases && Array.isArray(data.releases)) {
         for (const release of data.releases) {
@@ -201,18 +272,14 @@ class MusicModule extends BaseModule {
         }
       }
       
-      // Parse tracks dari response
       if (data.tracks && Array.isArray(data.tracks)) {
         for (const track of data.tracks) {
-          // Get artist name
           const artistName = track.artistNames?.[0] || track.artists?.[0]?.name || 'Unknown Artist';
           
-          // Get album/release info
           let albumTitle = 'Unknown Album';
           let albumArtwork = track.artwork;
           let releaseDate = track.releaseDate;
           
-          // Try to match release by releaseId or track.releaseId
           const releaseKey = track.releaseId;
           if (releaseKey && releaseMap.has(releaseKey)) {
             const release = releaseMap.get(releaseKey);
@@ -226,29 +293,26 @@ class MusicModule extends BaseModule {
             title: track.title || 'Unknown',
             artist: artistName,
             album: albumTitle,
-            duration: track.duration ? Math.round(track.duration / 1000) : 0, // duration in ms -> seconds
+            duration: track.duration ? Math.round(track.duration / 1000) : 0,
             cover: albumArtwork,
             year: releaseDate ? new Date(releaseDate).getFullYear() : null,
             explicit: track.explicit || false,
-            quality: 'FLAC', // Monochrome provides FLAC
+            quality: 'FLAC',
             isrc: track.isrc,
             playable: track.playable
           });
         }
       }
       
-      console.log(`[MusicModule] Found ${results.length} tracks`);
+      this.logger.info({ count: results.length }, 'Found tracks');
       return results;
       
     } catch (error) {
-      console.error('[MusicModule] Search API error:', error.message);
+      this.logger.error({ err: error, query }, 'Search API error');
       throw error;
     }
   }
 
-  /**
-   * Format search results dari API (fallback untuk data lama)
-   */
   formatSearchResults(items) {
     return items
       .filter(item => item && item.id && item.title)
@@ -266,13 +330,8 @@ class MusicModule extends BaseModule {
       }));
   }
 
-  /**
-   * Mock search results untuk demo/testing (fallback jika API error)
-   * Termasuk lagu Indonesia populer
-   */
   getMockSearchResults(query) {
     const mockData = [
-      // Indonesian songs
       { id: 'mock_1', title: 'Ada Apa Denganmu', artist: 'Peterpan', album: 'Taman Langit', duration: 255, year: 2003, quality: 'FLAC' },
       { id: 'mock_2', title: 'Menunggumu', artist: 'Peterpan', album: 'Taman Langit', duration: 287, year: 2003, quality: 'FLAC' },
       { id: 'mock_3', title: 'Mimpi Yang Sempurna', artist: 'Peterpan', album: 'Bintang Di Surga', duration: 268, year: 2004, quality: 'FLAC' },
@@ -293,7 +352,6 @@ class MusicModule extends BaseModule {
       { id: 'mock_18', title: 'Sewaktu Denganku', artist: 'Tulus', album: 'Gajah', duration: 256, year: 2012, quality: 'FLAC' },
       { id: 'mock_19', title: 'Terlalu Lama', artist: 'Raisa', album: 'Raisa', duration: 278, year: 2011, quality: 'FLAC' },
       { id: 'mock_20', title: 'Could It Be', artist: 'Raisa', album: 'Heart To Heart', duration: 267, year: 2017, quality: 'FLAC' },
-      // International songs
       { id: 'mock_21', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', duration: 200, year: 2020, quality: 'FLAC' },
       { id: 'mock_22', title: 'Shape of You', artist: 'Ed Sheeran', album: '÷', duration: 233, year: 2017, quality: 'FLAC' },
       { id: 'mock_23', title: 'Levitating', artist: 'Dua Lipa', album: 'Future Nostalgia', duration: 203, year: 2020, quality: 'FLAC' },
@@ -308,12 +366,9 @@ class MusicModule extends BaseModule {
     );
   }
 
-  /**
-   * Tampilkan hasil search dengan inline keyboard
-   */
   async showSearchResults(ctx, query, page, isEdit = false, messageId = null) {
     const userId = ctx.from.id;
-    const cache = this.searchCache.get(userId);
+    let cache = this.searchCache.get(userId);
     
     if (!cache || cache.query !== query) {
       const results = await this.searchTracks(query);
@@ -325,6 +380,11 @@ class MusicModule extends BaseModule {
           await ctx.reply(text);
         }
         return;
+      }
+      // Ensure cache object exists
+      if (!cache) {
+        cache = { query, results: [], page: 0, timestamp: Date.now() };
+        this.searchCache.set(userId, cache);
       }
       cache.results = results;
       cache.query = query;
@@ -338,7 +398,6 @@ class MusicModule extends BaseModule {
     const end = Math.min(start + itemsPerPage, results.length);
     const pageResults = results.slice(start, end);
     
-    // Build message
     let text = `🔍 *Hasil pencarian: "${query}"*\n`;
     text += `📄 Halaman ${page + 1} dari ${totalPages} (${results.length} hasil)\n\n`;
     
@@ -357,7 +416,6 @@ class MusicModule extends BaseModule {
       )]);
     });
     
-    // Navigation buttons
     const navButtons = [];
     if (page > 0) {
       navButtons.push(Markup.button.callback('⬅️ Prev', `music_page_${query}_${page - 1}`));
@@ -381,14 +439,10 @@ class MusicModule extends BaseModule {
     }
   }
 
-  /**
-   * Handle download track
-   */
   async handleDownload(ctx, trackId) {
     const userId = ctx.from.id;
     const chatId = ctx.chat.id;
     
-    // Cek apakah trackId dari cache
     const cache = this.searchCache.get(userId);
     let trackInfo = null;
     
@@ -397,7 +451,6 @@ class MusicModule extends BaseModule {
     }
     
     if (!trackInfo) {
-      // Coba fetch info track
       trackInfo = await this.getTrackInfo(trackId);
     }
     
@@ -405,7 +458,8 @@ class MusicModule extends BaseModule {
       return ctx.reply('❌ Track tidak ditemukan. Coba search dulu dengan `/music <query>`.', { parse_mode: 'Markdown' });
     }
     
-    // Kirim pesan progress
+    await this.acquireDownloadSemaphore(ctx);
+    
     const progressMsg = await ctx.reply(
       `⬇️ *Downloading...*\n\n` +
       `🎵 **${trackInfo.title}**\n` +
@@ -415,10 +469,18 @@ class MusicModule extends BaseModule {
       { parse_mode: 'Markdown' }
     );
     
+    let filePath = null;
+    let downloadId = null;
+    
+    if (this.db) {
+      downloadId = this.db.downloadHistory.insert(
+        String(userId), trackId, trackInfo.title, trackInfo.artist, trackInfo.album,
+        0, trackInfo.duration, trackInfo.quality, 'queued'
+      );
+    }
+    
     try {
-      // Download file
-      const filePath = await this.downloadTrack(trackId, trackInfo, (progress) => {
-        // Update progress setiap 10%
+      filePath = await this.downloadTrack(trackId, trackInfo, (progress) => {
         if (progress.percent % 10 === 0) {
           ctx.telegram.editMessageText(
             chatId, progressMsg.message_id, null,
@@ -427,19 +489,21 @@ class MusicModule extends BaseModule {
             `👤 ${trackInfo.artist}\n\n` +
             `📥 ${progress.percent}% (${this.formatBytes(progress.downloaded)}/${this.formatBytes(progress.total)})`,
             { parse_mode: 'Markdown' }
-          ).catch(() => {}); // Ignore error jika pesan sama
+          ).catch(() => {});
         }
       });
       
-      // Cek ukuran file
+      if (this.db) {
+        this.db.downloadHistory.update(downloadId, 'downloading', 0, 0, null);
+      }
+      
       const stats = fs.statSync(filePath);
-      console.log(`[MusicModule] Uploading file: ${filePath} (${stats.size} bytes)`);
+      this.logger.info({ filePath, size: stats.size }, 'Uploading file');
       
       if (stats.size < 5000) {
         throw new Error(`File terlalu kecil: ${stats.size} bytes`);
       }
       
-      // Upload ke Telegram dengan timeout lebih lama
       await ctx.telegram.editMessageText(
         chatId, progressMsg.message_id, null,
         `⬆️ *Uploading ke Telegram...*\n\n` +
@@ -449,79 +513,86 @@ class MusicModule extends BaseModule {
         { parse_mode: 'Markdown' }
       );
       
-      // Upload dengan retry logic untuk handle network issues
+      await this.acquireUploadSemaphore(ctx);
+      
       let uploadSuccess = false;
       let lastError = null;
       const maxRetries = 3;
       
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-          // Gunakan stream untuk upload yang lebih reliable
-          const fileStream = fs.createReadStream(filePath);
-          
-          await ctx.replyWithAudio(
-            { source: fileStream },
-            {
-              title: trackInfo.title,
-              performer: trackInfo.artist,
-              caption: `🎵 ${trackInfo.title} - ${trackInfo.artist}\n💿 ${trackInfo.album}\n🎧 ${trackInfo.quality || 'FLAC'} (${this.formatBytes(stats.size)})\n\n🤖 Downloaded via @${ctx.botInfo?.username || 'bot'}`,
-              parse_mode: 'Markdown'
-            }
-          );
-          
-          uploadSuccess = true;
-          break;
-        } catch (uploadError) {
-          lastError = uploadError;
-          console.error(`[MusicModule] Upload attempt ${attempt}/${maxRetries} failed:`, uploadError.message);
-          
-          if (attempt < maxRetries) {
-            // Wait before retry (exponential backoff)
-            const waitTime = attempt * 2000;
-            await ctx.telegram.editMessageText(
-              chatId, progressMsg.message_id, null,
-              `⬆️ *Upload ke Telegram... (Percobaan ${attempt + 1}/${maxRetries})*\n\n` +
-              `🎵 **${trackInfo.title}**\n` +
-              `👤 ${trackInfo.artist}\n` +
-              `📦 ${this.formatBytes(stats.size)}\n\n` +
-              `⚠️ Network issue, mencoba lagi dalam ${waitTime/1000}s...`,
-              { parse_mode: 'Markdown' }
+      try {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            const fileStream = fs.createReadStream(filePath);
+            
+            await ctx.replyWithAudio(
+              { source: fileStream },
+              {
+                title: trackInfo.title,
+                performer: trackInfo.artist,
+                caption: `🎵 ${trackInfo.title} - ${trackInfo.artist}\n💿 ${trackInfo.album}\n🎧 ${trackInfo.quality || 'FLAC'} (${this.formatBytes(stats.size)})\n\n🤖 Downloaded via @${ctx.botInfo?.username || 'bot'}`,
+                parse_mode: 'Markdown'
+              }
             );
-            await new Promise(resolve => setTimeout(resolve, waitTime));
+            
+            uploadSuccess = true;
+            break;
+          } catch (uploadError) {
+            lastError = uploadError;
+            this.logger.error({ err: uploadError, attempt, maxRetries }, 'Upload attempt failed');
+            
+            if (attempt < maxRetries) {
+              const waitTime = attempt * 2000;
+              await ctx.telegram.editMessageText(
+                chatId, progressMsg.message_id, null,
+                `⬆️ *Upload ke Telegram... (Percobaan ${attempt + 1}/${maxRetries})*\n\n` +
+                `🎵 **${trackInfo.title}**\n` +
+                `👤 ${trackInfo.artist}\n` +
+                `📦 ${this.formatBytes(stats.size)}\n\n` +
+                `⚠️ Network issue, mencoba lagi dalam ${waitTime/1000}s...`,
+                { parse_mode: 'Markdown' }
+              );
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+            }
           }
         }
+      } finally {
+        this.releaseUploadSemaphore();
       }
       
       if (!uploadSuccess) {
         throw lastError || new Error('Upload gagal setelah ' + maxRetries + ' percobaan');
       }
       
-      // Hapus pesan progress
       await ctx.telegram.deleteMessage(chatId, progressMsg.message_id);
       
-      // Hapus file temporary
       this.deleteTempFile(filePath);
       
-    } catch (error) {
-      console.error('[MusicModule] Download error:', error);
+      if (this.db) {
+        this.db.downloadHistory.update(downloadId, 'success', stats.size, trackInfo.duration, null);
+        this.db.users.incrementDownloads(String(userId));
+      }
       
-      // Pesan error yang lebih informatif
+      this.logger.info({ userId, trackId, title: trackInfo.title }, 'Download completed successfully');
+      
+    } catch (error) {
+      this.logger.error({ err: error, userId, trackId }, 'Download error');
+      
       let errorMsg = error.message;
       if (errorMsg.includes('autentikasi') || errorMsg.includes('authentication') || errorMsg.includes('cookies')) {
-        errorMsg = `🔐 *Monochrome API Memerlukan Autentikasi*\n\n` +
-          `Maaf, download dari Monochrome memerlukan login/cookies yang tidak tersedia di bot publik ini.\n\n` +
-          `💡 *Solusi:*\n` +
-          `• Gunakan website Monochrome langsung: https://monochrome.st\n` +
-          `• Atau gunakan aplikasi desktop Monochrome\n` +
-          `• Bot ini hanya bisa search (jika API public tersedia)`;
+        errorMsg = '🔐 *Monochrome API Memerlukan Autentikasi*\n\n' +
+          'Maaf, download dari Monochrome memerlukan login/cookies yang tidak tersedia di bot publik ini.\n\n' +
+          '💡 *Solusi:*\n' +
+          '• Gunakan website Monochrome langsung: https://monochrome.st\n' +
+          '• Atau gunakan aplikasi desktop Monochrome\n' +
+          '• Bot ini hanya bisa search (jika API public tersedia)';
       } else if (errorMsg.includes('socket hang up') || errorMsg.includes('ECONNRESET') || errorMsg.includes('timeout')) {
-        errorMsg = `🌐 *Network Error saat Upload ke Telegram*\n\n` +
+        errorMsg = '🌐 *Network Error saat Upload ke Telegram*\n\n' +
           `File sudah didownload (${this.formatBytes(stats?.size || 0)}) tapi gagal upload ke Telegram.\n` +
-          `Ini biasanya karena koneksi tidak stabil atau file terlalu besar.\n\n` +
-          `💡 *Solusi:*\n` +
-          `• Coba lagi nanti\n` +
-          `• Atau gunakan website Monochrome langsung\n` +
-          `• File tersedia di server bot (temp), hubungi admin jika perlu`;
+          'Ini biasanya karena koneksi tidak stabil atau file terlalu besar.\n\n' +
+          '💡 *Solusi:*\n' +
+          '• Coba lagi nanti\n' +
+          '• Atau gunakan website Monochrome langsung\n' +
+          '• File tersedia di server bot (temp), hubungi admin jika perlu';
       }
       
       await ctx.telegram.editMessageText(
@@ -531,12 +602,16 @@ class MusicModule extends BaseModule {
         errorMsg,
         { parse_mode: 'Markdown' }
       );
+      
+      if (this.db) {
+        this.db.downloadHistory.update(downloadId, 'failed', stats?.size || 0, trackInfo.duration, error.message);
+      }
+      
+    } finally {
+      this.releaseDownloadSemaphore();
     }
   }
 
-  /**
-   * Get track info dari API
-   */
   async getTrackInfo(trackId) {
     try {
       const baseUrl = this.config.monochromeApiBaseUrl || this.config.apiBaseUrl;
@@ -544,7 +619,7 @@ class MusicModule extends BaseModule {
       
       const url = `${baseUrl}${trackEndpoint}/${trackId}`;
       
-      console.log(`[MusicModule] Getting track info: ${url}`);
+      this.logger.debug({ url }, 'Getting track info');
       const response = await axios.get(url, {
         headers: { 'Accept': 'application/json' },
         timeout: 10000
@@ -554,21 +629,15 @@ class MusicModule extends BaseModule {
         return this.formatSearchResults([response.data])[0];
       }
     } catch (error) {
-      console.error('[MusicModule] Get track info error:', error.message);
+      this.logger.error({ err: error, trackId }, 'Get track info error');
     }
     return null;
   }
 
-  /**
-   * Download track dari Monochrome
-   * Note: Actual download requires authentication/cookies dari Monochrome
-   * Ini adalah implementasi struktur - perlu disesuaikan dengan API aktual
-   */
   async downloadTrack(trackId, trackInfo, onProgress) {
     const fileName = this.sanitizeFileName(`${trackInfo.artist} - ${trackInfo.title}.flac`);
     const filePath = path.join(this.config.tempDir, fileName);
     
-    // Gunakan config dari global
     const baseUrl = this.config.monochromeApiBaseUrl || this.config.apiBaseUrl;
     const downloadEndpoint = this.config.monochromeDownloadEndpoint || this.config.downloadEndpoint;
     
@@ -580,7 +649,7 @@ class MusicModule extends BaseModule {
     
     for (const url of downloadUrls) {
       try {
-        console.log(`[MusicModule] Trying download: ${url}`);
+        this.logger.debug({ url }, 'Trying download');
         const response = await axios({
           method: 'GET',
           url: url,
@@ -601,7 +670,6 @@ class MusicModule extends BaseModule {
           }
         });
         
-        // Save file
         const writer = fs.createWriteStream(filePath);
         response.data.pipe(writer);
         
@@ -610,7 +678,6 @@ class MusicModule extends BaseModule {
           writer.on('error', reject);
         });
         
-        // Cek ukuran file
         const stats = fs.statSync(filePath);
         if (stats.size > this.config.maxFileSize) {
           this.deleteTempFile(filePath);
@@ -622,39 +689,27 @@ class MusicModule extends BaseModule {
           throw new Error('File terlalu kecil, kemungkinan error');
         }
         
-        console.log(`[MusicModule] Downloaded from ${url}: ${this.formatBytes(stats.size)}`);
+        this.logger.info({ url, size: stats.size }, 'Downloaded successfully');
         return filePath;
         
       } catch (error) {
-        console.error(`[MusicModule] Download failed from ${url}:`, error.message);
+        this.logger.error({ err: error, url }, 'Download failed');
         if (fs.existsSync(filePath)) this.deleteTempFile(filePath);
         continue;
       }
     }
     
-    // Jika semua gagal, throw error - JANGAN pakai mock
     throw new Error(`Semua endpoint download gagal untuk track: ${trackId}. Monochrome API memerlukan autentikasi/cookies yang tidak tersedia di bot ini.`);
   }
 
-  /**
-   * Buat file demo (sine wave audio) untuk testing
-   * Menggunakan spawn langsung karena fluent-ffmpeg bermasalah dengan lavfi di Windows
-   * Sine wave lebih realistis & file size lebih besar dari silent audio
-   */
   async createDemoFile(trackInfo, filePath) {
-    const { spawn } = require('child_process');
-    const ffmpegStatic = require('ffmpeg-static');
-    
     if (!ffmpegStatic) {
       throw new Error('ffmpeg-static not found');
     }
     
     return new Promise((resolve, reject) => {
-      // Escape metadata untuk command line
       const escapeMeta = (str) => str.replace(/"/g, '\\"');
       
-      // Generate 30 detik sine wave 440Hz (A4) + 880Hz (A5) stereo
-      // Lebih realistis & file size ~300-500KB untuk FLAC
       const args = [
         '-f', 'lavfi',
         '-i', 'sine=frequency=440:duration=30:sample_rate=44100',
@@ -670,7 +725,7 @@ class MusicModule extends BaseModule {
         filePath
       ];
       
-      console.log('[MusicModule] Running ffmpeg demo generation (30s sine wave)...');
+      this.logger.info('Running ffmpeg demo generation (30s sine wave)...');
       const proc = spawn(ffmpegStatic, args);
       
       let stderr = '';
@@ -681,14 +736,14 @@ class MusicModule extends BaseModule {
       proc.on('close', (code) => {
         if (code === 0 && fs.existsSync(filePath)) {
           const stats = fs.statSync(filePath);
-          if (stats.size > 10000) { // Min 10KB
-            console.log(`[MusicModule] Demo file created: ${filePath} (${stats.size} bytes)`);
+          if (stats.size > 10000) {
+            this.logger.info({ filePath, size: stats.size }, 'Demo file created');
             resolve(filePath);
           } else {
             reject(new Error(`Generated file too small: ${stats.size} bytes`));
           }
         } else {
-          console.error('[MusicModule] FFmpeg failed:', stderr);
+          this.logger.error({ stderr, code }, 'FFmpeg failed');
           reject(new Error(`FFmpeg exited with code ${code}: ${stderr}`));
         }
       });
@@ -699,28 +754,22 @@ class MusicModule extends BaseModule {
     });
   }
 
-  /**
-   * Cleanup file temporary
-   */
   deleteTempFile(filePath) {
     try {
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
-        console.log(`[MusicModule] Deleted temp file: ${filePath}`);
+        this.logger.debug({ filePath }, 'Deleted temp file');
       }
     } catch (error) {
-      console.error('[MusicModule] Error deleting temp file:', error);
+      this.logger.error({ err: error, filePath }, 'Error deleting temp file');
     }
   }
 
-  /**
-   * Cleanup file lama (> 1 jam)
-   */
   cleanupTempFiles() {
     try {
       const files = fs.readdirSync(this.config.tempDir);
       const now = Date.now();
-      const maxAge = 60 * 60 * 1000; // 1 jam
+      const maxAge = 60 * 60 * 1000;
       
       files.forEach(file => {
         const filePath = path.join(this.config.tempDir, file);
@@ -730,13 +779,10 @@ class MusicModule extends BaseModule {
         }
       });
     } catch (error) {
-      console.error('[MusicModule] Cleanup error:', error);
+      this.logger.error({ err: error }, 'Cleanup error');
     }
   }
 
-  /**
-   * Helper: Format duration (detik -> MM:SS)
-   */
   formatDuration(seconds) {
     if (!seconds) return '--:--';
     const mins = Math.floor(seconds / 60);
@@ -744,9 +790,6 @@ class MusicModule extends BaseModule {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 
-  /**
-   * Helper: Format bytes
-   */
   formatBytes(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -755,9 +798,6 @@ class MusicModule extends BaseModule {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
-  /**
-   * Helper: Sanitize filename
-   */
   sanitizeFileName(name) {
     return name
       .replace(/[<>:"/\\|?*]/g, '_')
@@ -767,4 +807,4 @@ class MusicModule extends BaseModule {
   }
 }
 
-module.exports = MusicModule;
+export default MusicModule;

@@ -1,4 +1,4 @@
-const BaseModule = require('./BaseModule');
+import BaseModule from './BaseModule.js';
 
 class TimeModule extends BaseModule {
   constructor() {
@@ -8,7 +8,7 @@ class TimeModule extends BaseModule {
     this.version = '1.0.0';
     this.author = 'Bot Developer';
     this.commands = [
-      { command: 'time', description: '🕐 Menampilkan waktu server (WIB)', adminOnly: false }
+      { command: 'time', description: '🕐 Menampilkan waktu server (WIB)', adminOnly: false, rateLimit: true }
     ];
   }
 
@@ -17,7 +17,7 @@ class TimeModule extends BaseModule {
   }
 
   registerHandlers() {
-    this.bot.command('time', async (ctx) => {
+    this.rateLimitedCommand('time', '🕐 Menampilkan waktu server (WIB)', async (ctx) => {
       const now = new Date();
       const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000); // UTC+7
       await ctx.reply(`🕐 Waktu saat ini (WIB): ${wib.toLocaleString('id-ID')}`);
@@ -25,4 +25,4 @@ class TimeModule extends BaseModule {
   }
 }
 
-module.exports = TimeModule;
+export default TimeModule;

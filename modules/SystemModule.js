@@ -1,5 +1,5 @@
-const BaseModule = require('./BaseModule');
-const os = require('os');
+import BaseModule from './BaseModule.js';
+import os from 'os';
 
 class SystemModule extends BaseModule {
   constructor() {
@@ -9,16 +9,15 @@ class SystemModule extends BaseModule {
     this.version = '1.0.0';
     this.author = 'Bot Developer';
     this.commands = [
-      { command: 'system', description: '💻 Cek info sistem server', adminOnly: true }
+      { command: 'system', description: '💻 Cek info sistem server', adminOnly: true, rateLimit: true }
     ];
-    this.adminOnly = true; // Seluruh module hanya untuk admin
+    this.adminOnly = true;
   }
 
   async init(bot, config) {
     await super.init(bot, config);
   }
 
-  // Helper: Format bytes
   formatBytes(bytes) {
     if (bytes === 0) return '0 Bytes';
     const k = 1024;
@@ -27,7 +26,6 @@ class SystemModule extends BaseModule {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
-  // Helper: Format uptime
   formatUptime(seconds) {
     const days = Math.floor(seconds / 86400);
     const hours = Math.floor((seconds % 86400) / 3600);
@@ -43,8 +41,7 @@ class SystemModule extends BaseModule {
   }
 
   registerHandlers() {
-    // Command /system - hanya admin
-    this.bot.command('system', this.adminOnlyMiddleware(), async (ctx) => {
+    this.rateLimitedCommand('system', '💻 Cek info sistem server', async (ctx) => {
       const totalMem = os.totalmem();
       const freeMem = os.freemem();
       const usedMem = totalMem - freeMem;
@@ -61,7 +58,6 @@ class SystemModule extends BaseModule {
       const nodeVersion = process.version;
       const hostname = os.hostname();
       
-      // CPU usage per core
       const cpuUsage = cpus.map((cpu, i) => {
         const total = Object.values(cpu.times).reduce((a, b) => a + b, 0);
         const idle = cpu.times.idle;
@@ -86,8 +82,8 @@ class SystemModule extends BaseModule {
         `📦 *Bot:* ${this.config.botName || 'Simple Bot'} v${this.config.botVersion || '1.0.0'}`,
         { parse_mode: 'Markdown' }
       );
-    });
+    }, { adminOnly: true });
   }
 }
 
-module.exports = SystemModule;
+export default SystemModule;

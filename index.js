@@ -1,6 +1,9 @@
-require('dotenv').config();
-const { Telegraf } = require('telegraf');
-const ModuleLoader = require('./modules/ModuleLoader');
+import 'dotenv/config';
+import { Telegraf } from 'telegraf';
+import { ModuleLoader } from './modules/ModuleLoader.js';
+import { Database } from './modules/Database.js';
+import { createLogger, getLogger } from './modules/Logger.js';
+import { createRateLimiter, destroyRateLimiter } from './modules/RateLimiter.js';
 
 // ============================================
 // VALIDASI KONFIGURASI
@@ -17,6 +20,18 @@ const adminIds = (process.env.ADMIN_IDS || '')
   .map(id => id.trim())
   .filter(id => id.length > 0);
 
+// ============================================
+// INISIALISASI DATABASE, LOGGER, RATE LIMITER
+// ============================================
+const logger = createLogger('Main');
+const rateLimiter = createRateLimiter();
+
+// Initialize database FIRST (creates tables, runs schema)
+await Database.init();
+const db = Database;
+
+logger.info('✅ Database initialized');
+
 // Config object untuk modules
 const config = {
   botToken: process.env.BOT_TOKEN,
@@ -29,14 +44,16 @@ const config = {
   monochromeApiBaseUrl: 'https://tracks.monochrome.st',
   monochromeSearchEndpoint: '/api/v1/search',
   monochromeTrackEndpoint: '/api/v1/track',
-  // Download endpoint berdasarkan tracking user: GET https://tracks.monochrome.st/track/{id} -> stream
-  monochromeDownloadEndpoint: '/track'
+  monochromeDownloadEndpoint: '/track',
+  // Core services
+  logger,
+  db,
+  rateLimiter,
 };
 
-console.log('🚀 Starting bot...');
-console.log(`📛 Bot: ${config.botName} v${config.botVersion}`);
-console.log(`👤 Author: ${config.authorName} <${config.authorEmail}>`);
-console.log(`🔐 Admin IDs: ${adminIds.length > 0 ? adminIds.join(', ') : '(none)'}`);
+logger.info('🚀 Starting bot...');
+logger.info({ botName: config.botName, version: config.botVersion }, 'Bot config');
+logger.info({ adminCount: adminIds.length }, 'Admin IDs loaded');
 
 // ============================================
 // INISIALISASI BOT
@@ -45,9 +62,9 @@ const bot = new Telegraf(config.botToken);
 
 // Global error handler
 bot.catch((err, ctx) => {
-  console.error('❌ Global Error:', err);
+  logger.error({ err, updateType: ctx?.updateType }, 'Global error');
   if (ctx) {
-    ctx.reply('❌ Terjadi kesalahan. Silakan coba lagi nanti.');
+    ctx.reply('❌ Terjadi kesalahan. Silakan coba lagi nanti.').catch(() => {});
   }
 });
 
@@ -56,34 +73,37 @@ bot.catch((err, ctx) => {
 // ============================================
 const moduleLoader = new ModuleLoader(bot, config);
 
-moduleLoader.loadModules()
-  .then(() => {
-    // Launch bot setelah modules loaded
-    return bot.launch();
-  })
-  .then(() => {
-    console.log('✅ Bot sedang berjalan...');
-    console.log('📝 Tekan Ctrl+C untuk berhenti');
-  })
-  .catch((err) => {
-    console.error('❌ Gagal memulai bot:', err);
-    process.exit(1);
-  });
+await moduleLoader.loadModules();
+
+logger.info('✅ Modules loaded, launching bot...');
+await bot.launch();
+
+logger.info('✅ Bot sedang berjalan...');
+logger.info('📝 Tekan Ctrl+C untuk berhenti');
 
 // ============================================
 // GRACEFUL SHUTDOWN
 // ============================================
-process.once('SIGINT', () => {
-  console.log('\n🛑 Shutting down...');
-  bot.stop('SIGINT');
-});
+async function shutdown(signal) {
+  logger.info({ signal }, 'Shutting down...');
+  
+  destroyRateLimiter();
+  
+  try {
+    await bot.stop(signal);
+    logger.info('Bot stopped gracefully');
+  } catch (err) {
+    logger.error({ err }, 'Error during shutdown');
+  }
+  
+  Database.closeDb();
+  process.exit(0);
+}
 
-process.once('SIGTERM', () => {
-  console.log('\n🛑 Shutting down...');
-  bot.stop('SIGTERM');
-});
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
 
 // ============================================
 // EXPORTS (untuk testing/debugging)
 // ============================================
-module.exports = { bot, moduleLoader, config };
+export { bot, moduleLoader, config, db, logger, rateLimiter };

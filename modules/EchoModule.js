@@ -1,4 +1,4 @@
-const BaseModule = require('./BaseModule');
+import BaseModule from './BaseModule.js';
 
 class EchoModule extends BaseModule {
   constructor() {
@@ -8,7 +8,7 @@ class EchoModule extends BaseModule {
     this.version = '1.0.0';
     this.author = 'Bot Developer';
     this.commands = [
-      { command: 'echo', description: '📢 Mengulang teks yang dikirim', adminOnly: false }
+      { command: 'echo', description: '📢 Mengulang teks yang dikirim', adminOnly: false, rateLimit: true }
     ];
   }
 
@@ -17,7 +17,7 @@ class EchoModule extends BaseModule {
   }
 
   registerHandlers() {
-    this.bot.command('echo', async (ctx) => {
+    this.rateLimitedCommand('echo', '📢 Mengulang teks yang dikirim', async (ctx) => {
       const text = ctx.message.text.split(' ').slice(1).join(' ');
       if (!text) {
         return ctx.reply('Gunakan: /echo <teks yang ingin diulang>');
@@ -27,4 +27,4 @@ class EchoModule extends BaseModule {
   }
 }
 
-module.exports = EchoModule;
+export default EchoModule;

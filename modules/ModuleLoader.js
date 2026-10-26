@@ -1,5 +1,12 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { createLogger } from './Logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const logger = createLogger('ModuleLoader');
 
 /**
  * ModuleLoader - Auto load modules from modules folder
@@ -11,69 +18,59 @@ const path = require('path');
  * 4. Restart bot - auto load
  */
 
-class ModuleLoader {
+export class ModuleLoader {
   constructor(bot, config) {
     this.bot = bot;
     this.config = config;
     this.modules = new Map();
     this.allCommands = [];
+    this.logger = config.logger || logger;
   }
 
-  /**
-   * Load all modules from modules folder
-   */
   async loadModules() {
-    const modulesPath = path.join(__dirname);
+    const modulesPath = __dirname;
     
-    // Read all .js files except BaseModule, ModuleLoader, and index
     const files = fs.readdirSync(modulesPath)
       .filter(file => 
         file.endsWith('.js') && 
-        !['BaseModule.js', 'ModuleLoader.js', 'index.js'].includes(file)
+        !['BaseModule.js', 'ModuleLoader.js', 'Database.js', 'Logger.js', 'RateLimiter.js'].includes(file)
       );
 
-    console.log(`📦 Loading ${files.length} modules...`);
+    this.logger.info({ count: files.length }, 'Loading modules...');
 
     for (const file of files) {
       try {
         await this.loadModule(file);
       } catch (error) {
-        console.error(`❌ Failed to load module ${file}:`, error.message);
+        this.logger.error({ err: error, file }, `Failed to load module`);
       }
     }
 
-    // Register all slash commands to Telegram
     await this.registerSlashCommands();
 
-    console.log(`✅ All modules loaded (${this.modules.size} modules)`);
+    this.logger.info({ count: this.modules.size }, 'All modules loaded');
     return this.modules;
   }
 
-  /**
-   * Load single module
-   */
   async loadModule(filename) {
     const modulePath = path.join(__dirname, filename);
-    const ModuleClass = require(modulePath);
+    const moduleUrl = new URL('file://' + modulePath.replace(/\\/g, '/'));
+    const moduleModule = await import(moduleUrl.href);
+    const ModuleClass = moduleModule.default || moduleModule;
     
-    // Instantiate module
     const moduleInstance = new ModuleClass();
     
-    // Validate module
     if (!moduleInstance.name || typeof moduleInstance.init !== 'function') {
       throw new Error(`Invalid module structure: ${filename}`);
     }
 
-    // Initialize module with bot and config
     await moduleInstance.init(this.bot, {
       ...this.config,
-      allCommands: this.allCommands // Pass all commands for help generation
+      allCommands: this.allCommands
     });
 
-    // Store module
     this.modules.set(moduleInstance.name, moduleInstance);
 
-    // Collect commands for slash command registration
     if (moduleInstance.commands && moduleInstance.commands.length > 0) {
       moduleInstance.commands.forEach(cmd => {
         this.allCommands.push({
@@ -88,9 +85,6 @@ class ModuleLoader {
     return moduleInstance;
   }
 
-  /**
-   * Register all slash commands to Telegram
-   */
   async registerSlashCommands() {
     if (this.allCommands.length === 0) return;
 
@@ -101,53 +95,41 @@ class ModuleLoader {
 
     try {
       await this.bot.telegram.setMyCommands(commands);
-      console.log(`✅ Registered ${commands.length} slash commands to Telegram`);
+      this.logger.info({ count: commands.length }, 'Registered slash commands to Telegram');
     } catch (error) {
-      console.error('❌ Failed to register slash commands:', error.message);
+      this.logger.error({ err: error }, 'Failed to register slash commands');
     }
   }
 
-  /**
-   * Get loaded module by name
-   */
   getModule(name) {
     return this.modules.get(name);
   }
 
-  /**
-   * Get all loaded modules
-   */
   getAllModules() {
     return Array.from(this.modules.values());
   }
 
-  /**
-   * Reload a specific module (for development)
-   */
   async reloadModule(moduleName) {
-    // Clear require cache
-    const modulesPath = path.join(__dirname);
+    const modulesPath = __dirname;
     const files = fs.readdirSync(modulesPath)
-      .filter(file => file.endsWith('.js') && !['BaseModule.js', 'ModuleLoader.js', 'index.js'].includes(file));
+      .filter(file => file.endsWith('.js') && !['BaseModule.js', 'ModuleLoader.js', 'Database.js', 'Logger.js', 'RateLimiter.js'].includes(file));
 
     for (const file of files) {
       const modulePath = path.join(modulesPath, file);
-      delete require.cache[require.resolve(modulePath)];
+      delete globalThis.require?.cache?.[require.resolve(modulePath)];
     }
 
-    // Remove old module
     const oldModule = this.modules.get(moduleName);
     if (oldModule) {
       this.allCommands = this.allCommands.filter(cmd => cmd.module !== moduleName);
       this.modules.delete(moduleName);
     }
 
-    // Reload
     for (const file of files) {
       try {
         await this.loadModule(file);
       } catch (error) {
-        console.error(`❌ Failed to reload module ${file}:`, error.message);
+        this.logger.error({ err: error, file }, 'Failed to reload module');
       }
     }
 
@@ -155,4 +137,4 @@ class ModuleLoader {
   }
 }
 
-module.exports = ModuleLoader;
+export default ModuleLoader;

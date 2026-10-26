@@ -10,7 +10,7 @@
  * - Module name: 'weather' (lowercase)
  */
 
-const BaseModule = require('./BaseModule');
+import BaseModule from './BaseModule.js';
 
 class TemplateModule extends BaseModule {
   constructor() {
@@ -66,7 +66,7 @@ class TemplateModule extends BaseModule {
     // - this.config.botVersion
     // - this.config.allCommands (array semua command untuk help)
     
-    console.log(`[${this.name}] Module initialized`);
+    this.logger.info(`Module initialized`);
   }
 
   /**
@@ -77,14 +77,14 @@ class TemplateModule extends BaseModule {
     // ===== COMMAND HANDLERS =====
     
     // Command dasar: /template
-    this.bot.command('template', async (ctx) => {
+    this.rateLimitedCommand('template', 'Contoh command template', async (ctx) => {
       await ctx.reply('✅ Template command works!');
     });
 
     // Command dengan admin middleware (hanya admin)
-    this.bot.command('adminonly', this.adminOnlyMiddleware(), async (ctx) => {
+    this.rateLimitedCommand('adminonly', 'Command hanya untuk admin', async (ctx) => {
       await ctx.reply('🔒 Ini hanya bisa diakses admin!');
-    });
+    }, { adminOnly: true });
 
     // ===== HEARS (keyword matching) =====
     
@@ -103,7 +103,7 @@ class TemplateModule extends BaseModule {
 
     // ===== ADVANCED: Conversation/Scene =====
     // Untuk multi-step conversation, gunakan Telegraf Scenes
-    // const { Scenes } = require('telegraf');
+    // import { Scenes } from 'telegraf';
     // const scene = new Scenes.WizardScene('sceneName', ...);
     // this.bot.use(scene.middleware());
   }
@@ -118,7 +118,7 @@ class TemplateModule extends BaseModule {
   // this.formatUptime(seconds) - Format uptime (di SystemModule)
 }
 
-module.exports = TemplateModule;
+export default TemplateModule;
 
 // ============================================
 // CARA MEMBUAT MODULE BARU (Step by Step):
@@ -141,7 +141,7 @@ module.exports = TemplateModule;
 // CONTOH MODULE SEDERHANA:
 // ============================================
 /*
-const BaseModule = require('./BaseModule');
+import BaseModule from './BaseModule.js';
 
 class CuacaModule extends BaseModule {
   constructor() {
@@ -159,7 +159,7 @@ class CuacaModule extends BaseModule {
   }
 
   registerHandlers() {
-    this.bot.command('cuaca', async (ctx) => {
+    this.rateLimitedCommand('cuaca', '🌤 Cek cuaca hari ini', async (ctx) => {
       const city = ctx.message.text.split(' ').slice(1).join(' ') || 'Jakarta';
       // Panggil API cuaca...
       await ctx.reply(`🌤 Cuaca di ${city}: Cerah, 30°C`);
@@ -167,7 +167,7 @@ class CuacaModule extends BaseModule {
   }
 }
 
-module.exports = CuacaModule;
+export default CuacaModule;
 */
 
 // ============================================

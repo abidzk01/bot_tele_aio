@@ -1,4 +1,4 @@
-const BaseModule = require('./BaseModule');
+import BaseModule from './BaseModule.js';
 
 class AboutModule extends BaseModule {
   constructor() {
@@ -8,7 +8,7 @@ class AboutModule extends BaseModule {
     this.version = '1.0.0';
     this.author = 'Bot Developer';
     this.commands = [
-      { command: 'about', description: 'ℹ️ Info tentang bot', adminOnly: false }
+      { command: 'about', description: 'ℹ️ Info tentang bot', adminOnly: false, rateLimit: false }
     ];
   }
 
@@ -17,7 +17,7 @@ class AboutModule extends BaseModule {
   }
 
   registerHandlers() {
-    this.bot.command('about', async (ctx) => {
+    this.rateLimitedCommand('about', 'ℹ️ Info tentang bot', async (ctx) => {
       await ctx.reply(
         `🤖 *${this.config.botName || 'Simple Telegram Bot'}*\n\n` +
         `Versi: ${this.config.botVersion || '1.0.0'}\n` +
@@ -26,8 +26,8 @@ class AboutModule extends BaseModule {
         `Email: ${this.config.authorEmail || 'N/A'}`,
         { parse_mode: 'Markdown' }
       );
-    });
+    }, { rateLimit: false });
   }
 }
 
-module.exports = AboutModule;
+export default AboutModule;

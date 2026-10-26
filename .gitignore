@@ -6,11 +6,18 @@ node_modules/
 .env.local
 .env.*.local
 
-# Temporary files
-temp/
-*.tmp
-*.temp
+# Database (SQLite)
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Logs
+logs/
 *.log
+
+# WASM files (sql.js)
+sql-wasm.wasm
 
 # OS files
 .DS_Store
@@ -23,9 +30,9 @@ Thumbs.db
 .idea/
 *.iml
 
-# Test files
+# Test artifacts (keep test source files)
 test-*.js
-*.test.js
+test-semaphore.js
 
 # Coverage
 coverage/

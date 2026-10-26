@@ -1,5 +1,5 @@
-const BaseModule = require('./BaseModule');
-const { Markup } = require('telegraf');
+import BaseModule from './BaseModule.js';
+import { Markup } from 'telegraf';
 
 class StartModule extends BaseModule {
   constructor() {
@@ -9,7 +9,7 @@ class StartModule extends BaseModule {
     this.version = '1.0.0';
     this.author = 'Bot Developer';
     this.commands = [
-      { command: 'start', description: '🚀 Memulai bot', adminOnly: false }
+      { command: 'start', description: '🚀 Memulai bot', adminOnly: false, rateLimit: false }
     ];
   }
 
@@ -18,8 +18,7 @@ class StartModule extends BaseModule {
   }
 
   registerHandlers() {
-    // Command /start
-    this.bot.start(this.adminOnlyMiddleware(), async (ctx) => {
+    this.bot.start(async (ctx) => {
       const name = ctx.from.first_name || 'User';
       await ctx.reply(
         `Halo ${name}! 👋\nSelamat datang di *${this.config.botName || 'Simple Bot'}*.\n\nGunakan /help untuk melihat daftar perintah.`,
@@ -31,9 +30,7 @@ class StartModule extends BaseModule {
       );
     });
 
-    // Handle text "start" atau "mulai"
     this.bot.hears(/^(start|mulai)$/i, async (ctx) => {
-      // Trigger start command logic
       const name = ctx.from.first_name || 'User';
       await ctx.reply(
         `Halo ${name}! 👋\nGunakan /help untuk melihat daftar perintah.`,
@@ -47,4 +44,4 @@ class StartModule extends BaseModule {
   }
 }
 
-module.exports = StartModule;
+export default StartModule;
