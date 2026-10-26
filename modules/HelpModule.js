@@ -18,20 +18,34 @@ class HelpModule extends BaseModule {
 
   registerHandlers() {
     this.rateLimitedCommand('help', '📋 Menampilkan bantuan', async (ctx) => {
+      const userId = ctx.from?.id;
+      const isAdmin = this.isAdmin(userId);
+      
       let helpText = `📋 *Daftar Perintah:*\n\n`;
       
       if (this.config.allCommands && this.config.allCommands.length > 0) {
         this.config.allCommands.forEach(cmd => {
+          // Skip admin commands for non-admin users
+          if (cmd.adminOnly && !isAdmin) {
+            return;
+          }
+          
           const adminTag = cmd.adminOnly ? ' 🔒' : '';
           helpText += `/${cmd.command} - ${cmd.description}${adminTag}\n`;
         });
       } else {
         this.commands.forEach(cmd => {
+          if (cmd.adminOnly && !isAdmin) {
+            return;
+          }
           helpText += `/${cmd.command} - ${cmd.description}\n`;
         });
       }
       
-      helpText += `\n🔒 = Hanya untuk admin\n`;
+      if (isAdmin) {
+        helpText += `\n🔒 = Hanya untuk admin\n`;
+      }
+      
       helpText += `\nContoh: /echo Halo dunia!`;
       
       await ctx.reply(helpText, { parse_mode: 'Markdown' });

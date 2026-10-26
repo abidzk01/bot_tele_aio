@@ -44,6 +44,12 @@ export async function setupTestEnvironment() {
   return { logger, rateLimiter, db: Database };
 }
 
+export async function clearRateLimitData() {
+  const db = await Database.getDb();
+  db.exec('DELETE FROM rate_limits');
+  db.exec('DELETE FROM queue_entries');
+}
+
 export function teardownTestEnvironment() {
   destroyRateLimiter();
   Database.closeDb();

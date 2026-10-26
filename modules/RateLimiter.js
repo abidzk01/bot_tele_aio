@@ -3,23 +3,25 @@ import { createLogger } from './Logger.js';
 
 const logger = createLogger('RateLimiter');
 
-const DEFAULT_CONFIG = {
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000,
-  maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 30,
-  blockDuration: parseInt(process.env.RATE_LIMIT_BLOCK_DURATION) || 300000,
-  queueEnabled: process.env.RATE_LIMIT_QUEUE_ENABLED !== 'false',
-  queueTimeout: parseInt(process.env.RATE_LIMIT_QUEUE_TIMEOUT) || 120000,
-  perCommandLimits: {
-    music: 10,
-    search: 20,
-    download: 5,
-    system: 10,
-  },
-};
+function getDefaultConfig() {
+  return {
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 60000,
+    maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 30,
+    blockDuration: parseInt(process.env.RATE_LIMIT_BLOCK_DURATION) || 300000,
+    queueEnabled: process.env.RATE_LIMIT_QUEUE_ENABLED !== 'false',
+    queueTimeout: parseInt(process.env.RATE_LIMIT_QUEUE_TIMEOUT) || 120000,
+    perCommandLimits: {
+      music: 10,
+      search: 20,
+      download: 5,
+      system: 10,
+    },
+  };
+}
 
 class RateLimiter {
   constructor(config = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = { ...getDefaultConfig(), ...config };
     this.activeCommands = new Map();
     this.queues = new Map();
     this.cleanupInterval = null;
@@ -96,9 +98,7 @@ class RateLimiter {
     const allowed = record.count < limit;
 
     if (allowed) {
-      // Increment count when allowed
       await Database.rateLimits.increment(userId, command);
-      // Return updated remaining
       return {
         allowed: true,
         remaining: Math.max(0, limit - record.count - 1),
@@ -110,6 +110,8 @@ class RateLimiter {
       };
     }
 
+    // Limit exceeded - DON'T block yet, let acquireSlot handle queuing
+    // Only return blocked=false, allowed=false to signal "limit exceeded but not blocked"
     return {
       allowed: false,
       remaining: 0,
@@ -140,6 +142,7 @@ class RateLimiter {
       };
     }
 
+    // Limit exceeded but not blocked - try to queue
     if (!this.config.queueEnabled) {
       return { 
         success: false, 
@@ -167,10 +170,15 @@ class RateLimiter {
           queue.splice(idx, 1);
           Database.queueEntries.updateStatus(queueId, 'timeout');
         }
+        // After timeout, block the user
+        const blockedUntil = Date.now() + this.config.blockDuration;
+        Database.rateLimits.block(userId, command, blockedUntil);
         resolve({ 
           success: false, 
           queued: true, 
           timeout: true,
+          blocked: true,
+          blockRemaining: Math.ceil(this.config.blockDuration / 1000),
           message: `⏰ Timeout menunggu antrean (${this.config.queueTimeout/1000} detik). Silakan coba lagi.`
         });
       }, this.config.queueTimeout);
@@ -218,21 +226,28 @@ class RateLimiter {
       return;
     }
 
-    const check = await this.checkLimit(userId, command);
-    
-    if (check.allowed) {
-      const next = queue.shift();
+    // Slot was freed, allow next queued request to proceed
+    const next = queue.shift();
+    try {
       await Database.queueEntries.updateStatus(next.queueId, 'processing');
       this.activeCommands.set(queueKey, (this.activeCommands.get(queueKey) || 0) + 1);
+      // Increment the rate limit count in database for this queued request
+      await Database.rateLimits.increment(userId, command);
       next.resolve({ success: true, queued: true });
       logger.info({ userId, command, queueId: next.queueId }, 'Processing queued command');
+    } catch (error) {
+      logger.error({ err: error, userId, command, queueId: next.queueId }, 'Error processing queued command');
+      next.resolve({ success: false, queued: true, error: error.message });
     }
   }
 
-  cleanupExpiredBlocks() {
+  async cleanupExpiredBlocks() {
     const now = Date.now();
-    for (const [userId, commands] of this.activeCommands) {
-    }
+    // Clean up expired blocks from database
+    await Database.rateLimits.cleanup();
+    // Also clean up any blocked records where block has expired
+    const db = await Database.getDb();
+    db.exec(`UPDATE rate_limits SET blocked_until = 0 WHERE blocked_until > 0 AND blocked_until < ${now}`);
   }
 
   cleanupEmptyQueues() {
@@ -243,8 +258,8 @@ class RateLimiter {
     }
   }
 
-  getStatus(userId) {
-    const limits = Database.rateLimits.getAllForUser(userId);
+  async getStatus(userId) {
+    const limits = await Database.rateLimits.getAllForUser(userId);
     const active = {};
     
     for (const [key, count] of this.activeCommands) {
