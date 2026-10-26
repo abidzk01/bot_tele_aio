@@ -1,121 +1,94 @@
-# Telegram Music Downloader Bot
+# Bot Telegram AIO
 
-A modular Telegram bot built with Node.js and Telegraf for searching and downloading music from Monochrome (https://monochrome.st).
+**All-in-One Telegram Bot** - Modular bot with music downloader, system monitoring, and extensible module system.
 
 ## Features
 
-- 🔍 **Search Music** - Search tracks via Monochrome API
-- ⬇️ **Download Music** - Download FLAC audio streams directly from Monochrome
-- 🎵 **Inline Keyboards** - Interactive buttons for track selection and pagination
-- 📥 **Progress Tracking** - Real-time download/upload progress updates
-- 🔁 **Retry Logic** - Automatic retry with exponential backoff for network issues
-- 🧹 **Auto Cleanup** - Temporary files deleted after upload, cron job for old files
+- 🎵 **Music Downloader** - Search & download FLAC from Monochrome (https://monochrome.st)
+- 📊 **System Monitor** - CPU, RAM, disk, uptime via `/system` (admin only)
+- 🔧 **Modular Architecture** - Easy to extend with new modules
+- 🎮 **Interactive UI** - Inline keyboards, pagination, progress tracking
+- 🔁 **Smart Retry** - Exponential backoff for network reliability
 - 🔐 **Admin System** - Role-based command access control
-- 📦 **Modular Architecture** - Easy to extend with new modules
+- 🧹 **Auto Cleanup** - Temp files deleted after upload, cron job for old files
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `/music <query>` | Search and download music (main command) |
-| `/search <query>` | Search music only |
-| `/download <track_id>` | Download by track ID |
-| `/start` | Start bot with welcome message |
-| `/help` | Show help message |
-| `/about` | Bot information |
-| `/time` | Current server time (WIB) |
-| `/system` | System info (admin only) |
+| Command | Description | Access |
+|---------|-------------|--------|
+| `/music <query>` | Search & download music | All |
+| `/search <query>` | Search music only | All |
+| `/download <track_id>` | Download by track ID | All |
+| `/start` | Welcome message & menu | All |
+| `/help` | Auto-generated command list | All |
+| `/about` | Bot info (version, author) | All |
+| `/time` | Server time (WIB) | All |
+| `/system` | System info (CPU, RAM, disk) | Admin |
+| `/echo <text>` | Echo text back | All |
 
-## Architecture
+## Quick Start
 
-```
-music_downloader_bot/
-├── index.js              # Entry point, global config
-├── package.json
-├── .env                  # Environment variables
-├── .env.example          # Environment template
-└── modules/
-    ├── BaseModule.js     # Base class with admin middleware
-    ├── ModuleLoader.js   # Auto-load modules from folder
-    ├── TemplateModule.js # Template for new modules
-    ├── MusicModule.js    # Main: Search & Download from Monochrome
-    ├── StartModule.js    # /start command
-    ├── HelpModule.js     # /help command (auto-generates from commands)
-    ├── AboutModule.js    # /about command
-    ├── TimeModule.js     # /time command
-    ├── EchoModule.js     # /echo command
-    └── SystemModule.js   # /system command (admin only)
-```
-
-## Installation
-
-1. **Clone and install dependencies**
+### 1. Clone & Install
 ```bash
-git clone <repository>
-cd music_downloader_bot
+git clone https://github.com/abidzk01/bot_tele_aio.git
+cd bot_tele_aio
 npm install
 ```
 
-2. **Configure environment**
+### 2. Configure
 ```bash
 cp .env.example .env
 # Edit .env with your values
 ```
 
-3. **Get Telegram Bot Token**
-- Message [@BotFather](https://t.me/BotFather) on Telegram
-- Create new bot: `/newbot`
-- Copy the token to `.env`
+Required:
+- `BOT_TOKEN` - From [@BotFather](https://t.me/BotFather)
 
-4. **Get Admin User IDs** (optional)
-- Message [@userinfobot](https://t.me/userinfobot) on Telegram
-- Add IDs to `ADMIN_IDS` in `.env` (comma-separated)
+Optional:
+- `ADMIN_IDS` - Comma-separated Telegram user IDs (from [@userinfobot](https://t.me/userinfobot))
+- `BOT_NAME`, `BOT_VERSION`, `AUTHOR_NAME`, `AUTHOR_EMAIL`
 
-5. **Run the bot**
+### 3. Run
 ```bash
 npm start
 # Development with auto-reload
 npm run dev
 ```
 
-## Environment Variables
+## Architecture
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `BOT_TOKEN` | Telegram bot token from BotFather | Yes |
-| `BOT_NAME` | Bot display name | No (default: "Simple Telegram Bot") |
-| `BOT_VERSION` | Bot version | No (default: "1.0.0") |
-| `AUTHOR_NAME` | Author name for /about | No |
-| `AUTHOR_EMAIL` | Author email for /about | No |
-| `ADMIN_IDS` | Comma-separated Telegram user IDs | No |
-
-## Monochrome API Integration
-
-The bot uses Monochrome's public endpoints:
-
-- **Search**: `GET https://tracks.monochrome.st/search?q={query}`
-  - Returns: `{ tracks, releases, artists, users, playlists }`
-- **Download**: `GET https://tracks.monochrome.st/track/{trackId}`
-  - Returns: FLAC audio stream (~30-50MB per track)
-
-> **Note**: Search API is public, download streams are direct links. No authentication required for current endpoints.
+```
+bot_tele_aio/
+├── index.js              # Entry point, global config
+├── package.json
+├── .env                  # Environment variables (not in git)
+├── .env.example          # Template
+└── modules/
+    ├── BaseModule.js     # Base class with admin middleware
+    ├── ModuleLoader.js   # Auto-load modules from folder
+    ├── TemplateModule.js # Template for new modules
+    ├── MusicModule.js    # Search & Download from Monochrome
+    ├── StartModule.js    # /start command
+    ├── HelpModule.js     # /help (auto-generates from commands)
+    ├── AboutModule.js    # /about with config info
+    ├── TimeModule.js     # /time (WIB)
+    ├── EchoModule.js     # /echo
+    └── SystemModule.js   # /system (admin only)
+```
 
 ## Module Development
 
-### Creating a New Module
-
-1. Copy template:
+### Create New Module
 ```bash
 cp modules/TemplateModule.js modules/MyModule.js
 ```
 
-2. Edit `MyModule.js`:
 ```javascript
 class MyModule extends BaseModule {
   constructor() {
     super();
-    this.name = 'mymodule';        // Unique, lowercase
-    this.description = 'My module';
+    this.name = 'mymodule';
+    this.description = 'My custom module';
     this.commands = [
       { command: 'mycmd', description: 'My command', adminOnly: false }
     ];
@@ -123,7 +96,7 @@ class MyModule extends BaseModule {
 
   async init(bot, config) {
     await super.init(bot, config);
-    // config available: this.config.botToken, this.config.adminIds, etc.
+    // Access: this.config.botToken, this.config.adminIds, etc.
   }
 
   registerHandlers() {
@@ -141,22 +114,41 @@ class MyModule extends BaseModule {
 module.exports = MyModule;
 ```
 
-3. Restart bot - auto-loaded!
+Restart bot - auto-loaded!
 
 ### BaseModule Helpers
-
-- `this.isAdmin(userId)` - Check if user is admin
-- `this.adminOnlyMiddleware()` - Protect command for admins only
+- `this.isAdmin(userId)` - Check admin status
+- `this.adminOnlyMiddleware()` - Protect command for admins
 - `this.reply(ctx, text, options)` - Reply with Markdown
 - `this.replyError(ctx, error)` - Standard error reply
-- `this.config` - Access to all env config
+- `this.config` - All env config
+
+## Monochrome API Integration
+
+- **Search**: `GET https://tracks.monochrome.st/search?q={query}`
+  - Returns: `{ tracks, releases, artists, users, playlists }`
+- **Download**: `GET https://tracks.monochrome.st/track/{trackId}`
+  - Returns: FLAC audio stream (~30-50MB per track)
+
+No authentication required for current public endpoints.
 
 ## Error Handling
 
-- **Network errors**: Automatic retry (3 attempts, exponential backoff)
+- **Network errors**: Auto-retry (3 attempts, exponential backoff 2s/4s/6s)
 - **File validation**: Min 5KB, Max 50MB
 - **Auto cleanup**: Files deleted after upload, cron cleans >1hr old files
-- **User-friendly errors**: Descriptive messages for auth, network, timeout issues
+- **User-friendly errors**: Descriptive messages for auth, network, timeout
+
+## Environment Variables
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `BOT_TOKEN` | Telegram bot token from BotFather | Yes |
+| `BOT_NAME` | Bot display name | No (default: "Bot Telegram AIO") |
+| `BOT_VERSION` | Bot version | No (default: "1.0.0") |
+| `AUTHOR_NAME` | Author for /about | No |
+| `AUTHOR_EMAIL` | Author email for /about | No |
+| `ADMIN_IDS` | Comma-separated Telegram user IDs | No |
 
 ## License
 
