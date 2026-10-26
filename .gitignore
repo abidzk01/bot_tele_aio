@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+temp/
+*.tmp
+*.temp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Test files
+test-*.js
+*.test.js
+
+# Coverage
+coverage/
+
+# Build
+dist/
+build/
+
+# Monochrome JS dump (for analysis)
+monochrome.js
