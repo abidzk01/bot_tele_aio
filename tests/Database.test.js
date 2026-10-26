@@ -179,18 +179,22 @@ describe('Database', () => {
 
     test('should get top commands', async () => {
       // Use unique command names to avoid interference from other tests
-      await Database.commandStats.record('topcmd1', 100);
-      await Database.commandStats.record('topcmd1', 100);
-      await Database.commandStats.record('topcmd1', 100);
-      await Database.commandStats.record('topcmd2', 100);
-      await Database.commandStats.record('topcmd3', 100);
-      await Database.commandStats.record('topcmd3', 100);
+      const uniquePrefix = 'topcmd_' + Date.now() + '_';
+      await Database.commandStats.record(`${uniquePrefix}1`, 100);
+      await Database.commandStats.record(`${uniquePrefix}1`, 100);
+      await Database.commandStats.record(`${uniquePrefix}1`, 100);
+      await Database.commandStats.record(`${uniquePrefix}2`, 100);
+      await Database.commandStats.record(`${uniquePrefix}3`, 100);
+      await Database.commandStats.record(`${uniquePrefix}3`, 100);
       
-      const top = await Database.commandStats.getTop(2);
-      expect(top[0].command).toBe('topcmd1');
-      expect(top[0].total_calls).toBe(3);
-      expect(top[1].command).toBe('topcmd3');
-      expect(top[1].total_calls).toBe(2);
+      const top = await Database.commandStats.getTop(10);
+      // Filter to only our test commands
+      const ourCommands = top.filter(c => c.command.startsWith(uniquePrefix));
+      expect(ourCommands.length).toBe(3);
+      expect(ourCommands[0].command).toBe(`${uniquePrefix}1`);
+      expect(ourCommands[0].total_calls).toBe(3);
+      expect(ourCommands[1].command).toBe(`${uniquePrefix}3`);
+      expect(ourCommands[1].total_calls).toBe(2);
     });
   });
 

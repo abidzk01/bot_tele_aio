@@ -183,20 +183,6 @@ describe('MusicModule', () => {
     expect(results[1].album).toBe('Album 2');
   });
 
-  test('should filter mock search results', async () => {
-    await musicModule.init(mockBot, config);
-    
-    const results = musicModule.getMockSearchResults('peterpan');
-    expect(results.length).toBeGreaterThan(0);
-    expect(results.every(r => 
-      r.title.toLowerCase().includes('peterpan') || 
-      r.artist.toLowerCase().includes('peterpan')
-    )).toBe(true);
-    
-    const noResults = musicModule.getMockSearchResults('nonexistentband123');
-    expect(noResults.length).toBe(0);
-  });
-
   describe('handleSearch', () => {
     test('should reply with usage when no query', async () => {
       await musicModule.init(mockBot, config);
@@ -217,18 +203,20 @@ describe('MusicModule', () => {
   });
 
   describe('showSearchResults', () => {
-    test('should show no results message', async () => {
+    test('should handle empty cache and no results from search', async () => {
       await musicModule.init(mockBot, config);
       
       const ctx = createMockContext({ userId: 'showuser' });
       ctx.reply = jest.fn().mockResolvedValue({ message_id: 1, text: 'mock reply' });
       ctx.telegram.editMessageText = jest.fn().mockResolvedValue({ message_id: 1, text: 'edited' });
       
+      // Mock searchTracks to return empty results
+      musicModule.searchTracks = jest.fn().mockResolvedValue([]);
+      
       await musicModule.showSearchResults(ctx, 'no results', 0, false, null);
       
       expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Tidak ditemukan hasil'),
-        expect.any(Object)
+        expect.stringContaining('Tidak ditemukan hasil')
       );
     });
   });

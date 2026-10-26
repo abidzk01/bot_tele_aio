@@ -4,9 +4,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegStatic from 'ffmpeg-static';
-import { spawn } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,10 +52,6 @@ class MusicModule extends BaseModule {
     this.config = { ...config, ...moduleDefaultConfig };
     
     this.config.tempDir = path.join(__dirname, '..', 'temp');
-    
-    if (ffmpegStatic) {
-      ffmpeg.setFfmpegPath(ffmpegStatic);
-    }
     
     if (!fs.existsSync(this.config.tempDir)) {
       fs.mkdirSync(this.config.tempDir, { recursive: true });
@@ -328,42 +321,6 @@ class MusicModule extends BaseModule {
         explicit: item.explicit || false,
         quality: item.quality || 'FLAC'
       }));
-  }
-
-  getMockSearchResults(query) {
-    const mockData = [
-      { id: 'mock_1', title: 'Ada Apa Denganmu', artist: 'Peterpan', album: 'Taman Langit', duration: 255, year: 2003, quality: 'FLAC' },
-      { id: 'mock_2', title: 'Menunggumu', artist: 'Peterpan', album: 'Taman Langit', duration: 287, year: 2003, quality: 'FLAC' },
-      { id: 'mock_3', title: 'Mimpi Yang Sempurna', artist: 'Peterpan', album: 'Bintang Di Surga', duration: 268, year: 2004, quality: 'FLAC' },
-      { id: 'mock_4', title: 'Aku & Bintang', artist: 'Peterpan', album: 'Bintang Di Surga', duration: 298, year: 2004, quality: 'FLAC' },
-      { id: 'mock_5', title: 'Hari Yang Cerah', artist: 'Peterpan', album: 'Hari Yang Cerah', duration: 234, year: 2007, quality: 'FLAC' },
-      { id: 'mock_6', title: 'Cobalah Mengerti', artist: 'Noah', album: 'Second Chance', duration: 278, year: 2014, quality: 'FLAC' },
-      { id: 'mock_7', title: 'Separuh Aku', artist: 'Noah', album: 'Second Chance', duration: 267, year: 2014, quality: 'FLAC' },
-      { id: 'mock_8', title: 'Jangan Pergi', artist: 'Dewa 19', album: 'Bintang Lima', duration: 289, year: 2000, quality: 'FLAC' },
-      { id: 'mock_9', title: 'Kangen', artist: 'Dewa 19', album: 'Bintang Lima', duration: 312, year: 2000, quality: 'FLAC' },
-      { id: 'mock_10', title: 'Roman Picisan', artist: 'Dewa 19', album: 'Cintailah Cinta', duration: 276, year: 2002, quality: 'FLAC' },
-      { id: 'mock_11', title: 'Seperti Yang Kau Minta', artist: 'Chrisye', album: 'Dekade', duration: 298, year: 2002, quality: 'FLAC' },
-      { id: 'mock_12', title: 'Kala Cinta Menggoda', artist: 'Chrisye', album: 'Kala Cinta Menggoda', duration: 305, year: 1997, quality: 'FLAC' },
-      { id: 'mock_13', title: 'Laskar Pelangi', artist: 'Nidji', album: 'Laskar Pelangi OST', duration: 234, year: 2008, quality: 'FLAC' },
-      { id: 'mock_14', title: 'Hapus Aku', artist: 'Nidji', album: 'Top Up', duration: 267, year: 2007, quality: 'FLAC' },
-      { id: 'mock_15', title: 'Kau Adalah', artist: 'Isyana Sarasvati', album: 'Paradox', duration: 223, year: 2017, quality: 'FLAC' },
-      { id: 'mock_16', title: '1 2 3', artist: 'Tulus', album: 'Monokrom', duration: 234, year: 2014, quality: 'FLAC' },
-      { id: 'mock_17', title: 'Pamit', artist: 'Tulus', album: 'Monokrom', duration: 289, year: 2014, quality: 'FLAC' },
-      { id: 'mock_18', title: 'Sewaktu Denganku', artist: 'Tulus', album: 'Gajah', duration: 256, year: 2012, quality: 'FLAC' },
-      { id: 'mock_19', title: 'Terlalu Lama', artist: 'Raisa', album: 'Raisa', duration: 278, year: 2011, quality: 'FLAC' },
-      { id: 'mock_20', title: 'Could It Be', artist: 'Raisa', album: 'Heart To Heart', duration: 267, year: 2017, quality: 'FLAC' },
-      { id: 'mock_21', title: 'Blinding Lights', artist: 'The Weeknd', album: 'After Hours', duration: 200, year: 2020, quality: 'FLAC' },
-      { id: 'mock_22', title: 'Shape of You', artist: 'Ed Sheeran', album: '÷', duration: 233, year: 2017, quality: 'FLAC' },
-      { id: 'mock_23', title: 'Levitating', artist: 'Dua Lipa', album: 'Future Nostalgia', duration: 203, year: 2020, quality: 'FLAC' },
-      { id: 'mock_24', title: 'Bad Guy', artist: 'Billie Eilish', album: 'WHEN WE ALL FALL ASLEEP', duration: 194, year: 2019, quality: 'FLAC' },
-      { id: 'mock_25', title: 'Watermelon Sugar', artist: 'Harry Styles', album: 'Fine Line', duration: 174, year: 2019, quality: 'FLAC' }
-    ].map((item, i) => ({ ...item, id: `mock_${i+1}_${Date.now()}` }));
-    
-    return mockData.filter(item =>
-      item.title.toLowerCase().includes(query.toLowerCase()) ||
-      item.artist.toLowerCase().includes(query.toLowerCase()) ||
-      item.album.toLowerCase().includes(query.toLowerCase())
-    );
   }
 
   async showSearchResults(ctx, query, page, isEdit = false, messageId = null) {
@@ -700,58 +657,6 @@ class MusicModule extends BaseModule {
     }
     
     throw new Error(`Semua endpoint download gagal untuk track: ${trackId}. Monochrome API memerlukan autentikasi/cookies yang tidak tersedia di bot ini.`);
-  }
-
-  async createDemoFile(trackInfo, filePath) {
-    if (!ffmpegStatic) {
-      throw new Error('ffmpeg-static not found');
-    }
-    
-    return new Promise((resolve, reject) => {
-      const escapeMeta = (str) => str.replace(/"/g, '\\"');
-      
-      const args = [
-        '-f', 'lavfi',
-        '-i', 'sine=frequency=440:duration=30:sample_rate=44100',
-        '-f', 'lavfi',
-        '-i', 'sine=frequency=880:duration=30:sample_rate=44100',
-        '-filter_complex', '[0:a][1:a]amerge=inputs=2[aout]',
-        '-map', '[aout]',
-        '-c:a', 'flac',
-        '-compression_level', '5',
-        '-metadata', `title="${escapeMeta(trackInfo.title)}"`,
-        '-metadata', `artist="${escapeMeta(trackInfo.artist)}"`,
-        '-metadata', `album="${escapeMeta(trackInfo.album)}"`,
-        filePath
-      ];
-      
-      this.logger.info('Running ffmpeg demo generation (30s sine wave)...');
-      const proc = spawn(ffmpegStatic, args);
-      
-      let stderr = '';
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-      
-      proc.on('close', (code) => {
-        if (code === 0 && fs.existsSync(filePath)) {
-          const stats = fs.statSync(filePath);
-          if (stats.size > 10000) {
-            this.logger.info({ filePath, size: stats.size }, 'Demo file created');
-            resolve(filePath);
-          } else {
-            reject(new Error(`Generated file too small: ${stats.size} bytes`));
-          }
-        } else {
-          this.logger.error({ stderr, code }, 'FFmpeg failed');
-          reject(new Error(`FFmpeg exited with code ${code}: ${stderr}`));
-        }
-      });
-      
-      proc.on('error', (err) => {
-        reject(new Error(`Failed to spawn ffmpeg: ${err.message}`));
-      });
-    });
   }
 
   deleteTempFile(filePath) {
