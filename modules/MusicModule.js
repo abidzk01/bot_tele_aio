@@ -428,6 +428,7 @@ class MusicModule extends BaseModule {
     
     let filePath = null;
     let downloadId = null;
+    let stats = null;
     
     if (this.db) {
       downloadId = this.db.downloadHistory.insert(
@@ -454,7 +455,7 @@ class MusicModule extends BaseModule {
         this.db.downloadHistory.update(downloadId, 'downloading', 0, 0, null);
       }
       
-      const stats = fs.statSync(filePath);
+      stats = fs.statSync(filePath);
       this.logger.info({ filePath, size: stats.size }, 'Uploading file');
       
       if (stats.size < 5000) {
