@@ -33,7 +33,7 @@ export class ModuleLoader {
     const files = fs.readdirSync(modulesPath)
       .filter(file => 
         file.endsWith('.js') && 
-        !['BaseModule.js', 'ModuleLoader.js', 'Database.js', 'Logger.js', 'RateLimiter.js'].includes(file)
+        !['BaseModule.js', 'ModuleLoader.js', 'Database.js', 'Logger.js', 'RateLimiter.js', 'MonochromeClient.js'].includes(file)
       );
 
     this.logger.info({ count: files.length }, 'Loading modules...');
@@ -112,7 +112,7 @@ export class ModuleLoader {
   async reloadModule(moduleName) {
     const modulesPath = __dirname;
     const files = fs.readdirSync(modulesPath)
-      .filter(file => file.endsWith('.js') && !['BaseModule.js', 'ModuleLoader.js', 'Database.js', 'Logger.js', 'RateLimiter.js'].includes(file));
+      .filter(file => file.endsWith('.js') && !['BaseModule.js', 'ModuleLoader.js', 'Database.js', 'Logger.js', 'RateLimiter.js', 'MonochromeClient.js'].includes(file));
 
     for (const file of files) {
       const modulePath = path.join(modulesPath, file);

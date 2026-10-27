@@ -45,6 +45,9 @@ const config = {
   monochromeSearchEndpoint: '/api/v1/search',
   monochromeTrackEndpoint: '/api/v1/track',
   monochromeDownloadEndpoint: '/track',
+  // TIDAL config (from .env)
+  tidalClientId: process.env.TIDAL_CLIENT_ID,
+  tidalClientSecret: process.env.TIDAL_CLIENT_SECRET,
   // Core services
   logger,
   db,

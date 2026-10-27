@@ -3,7 +3,7 @@ import { Markup } from 'telegraf';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import axios from 'axios';
+import { MonochromeClient } from './MonochromeClient.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,6 +56,14 @@ class MusicModule extends BaseModule {
     if (!fs.existsSync(this.config.tempDir)) {
       fs.mkdirSync(this.config.tempDir, { recursive: true });
     }
+    
+    // Initialize MonochromeClient for downloads (with TIDAL support)
+    this.monoClient = new MonochromeClient({
+      apiBase: this.config.monochromeApiBaseUrl || this.config.apiBaseUrl,
+      quality: process.env.MONOCHROME_QUALITY || 'HI_RES_LOSSLESS',
+      tidalClientId: this.config.tidalClientId || process.env.TIDAL_CLIENT_ID,
+      tidalClientSecret: this.config.tidalClientSecret || process.env.TIDAL_CLIENT_SECRET,
+    });
     
     setInterval(() => this.cleanupTempFiles(), 10 * 60 * 1000);
     
@@ -602,83 +610,50 @@ class MusicModule extends BaseModule {
     const fileName = this.sanitizeFileName(`${trackInfo.artist} - ${trackInfo.title}.flac`);
     const filePath = path.join(this.config.tempDir, fileName);
     
-    const baseUrl = this.config.monochromeApiBaseUrl || this.config.apiBaseUrl;
-    const downloadEndpoint = this.config.monochromeDownloadEndpoint || this.config.downloadEndpoint;
-    
-    const downloadUrls = [
-      `${baseUrl}${downloadEndpoint}/${trackId}`,
-      `${baseUrl}/download/${trackId}`,
-      `${baseUrl}/api/download/${trackId}`
-    ];
-    
     const maxRetries = 3;
-    const baseDelay = 2000; // 2 seconds
+    const baseDelay = 2000;
     
-    for (const url of downloadUrls) {
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          this.logger.debug({ url, attempt }, 'Trying download');
-          const response = await axios({
-            method: 'GET',
-            url: url,
-            responseType: 'stream',
-            headers: {
-              'Accept': 'audio/flac,audio/*;q=0.9,*/*;q=0.8',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            timeout: this.config.downloadTimeout,
-            onDownloadProgress: (progressEvent) => {
-              if (onProgress && progressEvent.total) {
-                onProgress({
-                  percent: Math.round((progressEvent.loaded / progressEvent.total) * 100),
-                  downloaded: progressEvent.loaded,
-                  total: progressEvent.total
-                });
-              }
-            }
-          });
-          
-          const writer = fs.createWriteStream(filePath);
-          response.data.pipe(writer);
-          
-          await new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
-          });
-          
-          const stats = fs.statSync(filePath);
-          if (stats.size > this.config.maxFileSize) {
-            this.deleteTempFile(filePath);
-            throw new Error(`File terlalu besar: ${this.formatBytes(stats.size)} (max: ${this.formatBytes(this.config.maxFileSize)})`);
-          }
-          
-          if (stats.size < 1024) {
-            this.deleteTempFile(filePath);
-            throw new Error('File terlalu kecil, kemungkinan error');
-          }
-          
-          this.logger.info({ url, size: stats.size }, 'Downloaded successfully');
-          return filePath;
-          
-        } catch (error) {
-          this.logger.error({ err: error, url, attempt }, 'Download failed');
-          
-          // If 429 rate limited, retry with backoff
-          if (error.response?.status === 429 && attempt < maxRetries - 1) {
-            const delay = baseDelay * Math.pow(2, attempt);
-            this.logger.warn({ url, attempt, delayMs: delay }, 'Rate limited, retrying after backoff');
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
-          
-          // For other errors or final attempt, try next URL
-          if (fs.existsSync(filePath)) this.deleteTempFile(filePath);
-          break;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        this.logger.debug({ trackId, attempt }, 'Downloading track via MonochromeClient');
+        
+        const result = await this.monoClient.downloadTrack(trackId);
+        
+        // Write buffer to file
+        fs.writeFileSync(filePath, result.buffer);
+        
+        const stats = fs.statSync(filePath);
+        if (stats.size > this.config.maxFileSize) {
+          this.deleteTempFile(filePath);
+          throw new Error(`File terlalu besar: ${this.formatBytes(stats.size)} (max: ${this.formatBytes(this.config.maxFileSize)})`);
         }
+        
+        if (stats.size < 1024) {
+          this.deleteTempFile(filePath);
+          throw new Error('File terlalu kecil, kemungkinan error');
+        }
+        
+        this.logger.info({ trackId, size: stats.size, extension: result.extension }, 'Downloaded successfully via MonochromeClient');
+        return filePath;
+        
+      } catch (error) {
+        this.logger.error({ err: error, trackId, attempt }, 'Download failed');
+        
+        // If 429 rate limited, retry with backoff
+        if (error.message && (error.message.includes('429') || error.message.includes('Too Many Requests') || error.message.includes('rate limit')) && attempt < maxRetries - 1) {
+          const delay = baseDelay * Math.pow(2, attempt);
+          this.logger.warn({ trackId, attempt, delayMs: delay }, 'Rate limited, retrying after backoff');
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        // For other errors, break and throw
+        if (fs.existsSync(filePath)) this.deleteTempFile(filePath);
+        break;
       }
     }
     
-    throw new Error(`Semua endpoint download gagal untuk track: ${trackId}. Monochrome API mungkin rate-limited. Coba lagi dalam beberapa menit.`);
+    throw new Error(`Semua endpoint download gagal untuk track: ${trackId}. Monochrome API mungkin rate-limited atau membutuhkan autentikasi TIDAL. Coba lagi dalam beberapa menit.`);
   }
 
   deleteTempFile(filePath) {
