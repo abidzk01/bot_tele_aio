@@ -536,7 +536,13 @@ class MusicModule extends BaseModule {
       this.logger.error({ err: error, userId, trackId }, 'Download error');
       
       let errorMsg = error.message;
-      if (errorMsg.includes('autentikasi') || errorMsg.includes('authentication') || errorMsg.includes('cookies')) {
+      if (errorMsg.includes('rate-limited') || errorMsg.includes('429') || errorMsg.includes('Too Many Requests')) {
+        errorMsg = '⏱️ *Monochrome API Rate-Limited*\n\n' +
+          'Maaf, server Monochrome sedang banyak menerima request. Coba lagi dalam beberapa menit.\n\n' +
+          '💡 *Solusi:*\n' +
+          '• Tunggu beberapa saat lalu coba lagi\n' +
+          '• Atau gunakan website Monochrome langsung: https://monochrome.st';
+      } else if (errorMsg.includes('autentikasi') || errorMsg.includes('authentication') || errorMsg.includes('cookies')) {
         errorMsg = '🔐 *Monochrome API Memerlukan Autentikasi*\n\n' +
           'Maaf, download dari Monochrome memerlukan login/cookies yang tidak tersedia di bot publik ini.\n\n' +
           '💡 *Solusi:*\n' +
@@ -605,59 +611,74 @@ class MusicModule extends BaseModule {
       `${baseUrl}/api/download/${trackId}`
     ];
     
+    const maxRetries = 3;
+    const baseDelay = 2000; // 2 seconds
+    
     for (const url of downloadUrls) {
-      try {
-        this.logger.debug({ url }, 'Trying download');
-        const response = await axios({
-          method: 'GET',
-          url: url,
-          responseType: 'stream',
-          headers: {
-            'Accept': 'audio/flac,audio/*;q=0.9,*/*;q=0.8',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          },
-          timeout: this.config.downloadTimeout,
-          onDownloadProgress: (progressEvent) => {
-            if (onProgress && progressEvent.total) {
-              onProgress({
-                percent: Math.round((progressEvent.loaded / progressEvent.total) * 100),
-                downloaded: progressEvent.loaded,
-                total: progressEvent.total
-              });
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          this.logger.debug({ url, attempt }, 'Trying download');
+          const response = await axios({
+            method: 'GET',
+            url: url,
+            responseType: 'stream',
+            headers: {
+              'Accept': 'audio/flac,audio/*;q=0.9,*/*;q=0.8',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            timeout: this.config.downloadTimeout,
+            onDownloadProgress: (progressEvent) => {
+              if (onProgress && progressEvent.total) {
+                onProgress({
+                  percent: Math.round((progressEvent.loaded / progressEvent.total) * 100),
+                  downloaded: progressEvent.loaded,
+                  total: progressEvent.total
+                });
+              }
             }
+          });
+          
+          const writer = fs.createWriteStream(filePath);
+          response.data.pipe(writer);
+          
+          await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+          });
+          
+          const stats = fs.statSync(filePath);
+          if (stats.size > this.config.maxFileSize) {
+            this.deleteTempFile(filePath);
+            throw new Error(`File terlalu besar: ${this.formatBytes(stats.size)} (max: ${this.formatBytes(this.config.maxFileSize)})`);
           }
-        });
-        
-        const writer = fs.createWriteStream(filePath);
-        response.data.pipe(writer);
-        
-        await new Promise((resolve, reject) => {
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-        });
-        
-        const stats = fs.statSync(filePath);
-        if (stats.size > this.config.maxFileSize) {
-          this.deleteTempFile(filePath);
-          throw new Error(`File terlalu besar: ${this.formatBytes(stats.size)} (max: ${this.formatBytes(this.config.maxFileSize)})`);
+          
+          if (stats.size < 1024) {
+            this.deleteTempFile(filePath);
+            throw new Error('File terlalu kecil, kemungkinan error');
+          }
+          
+          this.logger.info({ url, size: stats.size }, 'Downloaded successfully');
+          return filePath;
+          
+        } catch (error) {
+          this.logger.error({ err: error, url, attempt }, 'Download failed');
+          
+          // If 429 rate limited, retry with backoff
+          if (error.response?.status === 429 && attempt < maxRetries - 1) {
+            const delay = baseDelay * Math.pow(2, attempt);
+            this.logger.warn({ url, attempt, delayMs: delay }, 'Rate limited, retrying after backoff');
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          
+          // For other errors or final attempt, try next URL
+          if (fs.existsSync(filePath)) this.deleteTempFile(filePath);
+          break;
         }
-        
-        if (stats.size < 1024) {
-          this.deleteTempFile(filePath);
-          throw new Error('File terlalu kecil, kemungkinan error');
-        }
-        
-        this.logger.info({ url, size: stats.size }, 'Downloaded successfully');
-        return filePath;
-        
-      } catch (error) {
-        this.logger.error({ err: error, url }, 'Download failed');
-        if (fs.existsSync(filePath)) this.deleteTempFile(filePath);
-        continue;
       }
     }
     
-    throw new Error(`Semua endpoint download gagal untuk track: ${trackId}. Monochrome API memerlukan autentikasi/cookies yang tidak tersedia di bot ini.`);
+    throw new Error(`Semua endpoint download gagal untuk track: ${trackId}. Monochrome API mungkin rate-limited. Coba lagi dalam beberapa menit.`);
   }
 
   deleteTempFile(filePath) {
